@@ -12,10 +12,14 @@ flate2 = "1.0.35"
 imageproc = "0.25.0"
 svg = "0.18.0"
 wasm-bindgen = "0.2.100"
-
-[dev-dependencies]
 image = { version = "0.25.5", default-features = false, features = [
     "rayon",
     "png",
+    "webp",
+    "jpeg",
     "bmp",
 ] }
+log = "0.4.25"
+
+[dev-dependencies]
+env_logger = "0.11.6"

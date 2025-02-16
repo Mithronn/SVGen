@@ -1,4 +1,5 @@
-use std::{error::Error, ffi::OsStr};
+use core::fmt;
+use std::error::Error;
 
 #[derive(Debug)]
 pub struct Chunk {
@@ -38,7 +39,7 @@ pub struct FrameControl {
     pub blend_op: u8,   // Blend operation (0-1)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Pixel {
     pub r: u8,
     pub g: u8,
@@ -46,324 +47,173 @@ pub struct Pixel {
     pub a: u8,
 }
 
-/// An enumeration of supported image formats.
-/// Not all formats support both encoding and decoding.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-#[non_exhaustive]
-pub enum ImageFormat {
-    /// An Image in PNG Format
-    Png,
-
-    /// An Image in JPEG Format
-    Jpeg,
-
-    /// An Image in GIF Format
-    Gif,
-
-    /// An Image in WEBP Format
-    WebP,
-
-    /// An Image in general PNM Format
-    Pnm,
-
-    /// An Image in TIFF Format
-    Tiff,
-
-    /// An Image in TGA Format
-    Tga,
-
-    /// An Image in DDS Format
-    Dds,
-
-    /// An Image in BMP Format
-    Bmp,
-
-    /// An Image in ICO Format
-    Ico,
-
-    /// An Image in Radiance HDR Format
-    Hdr,
-
-    /// An Image in OpenEXR Format
-    OpenExr,
-
-    /// An Image in farbfeld Format
-    Farbfeld,
-
-    /// An Image in AVIF Format
-    Avif,
-
-    /// An Image in QOI Format
-    Qoi,
-
-    /// An Image in PCX Format
-    Pcx,
+// A simple 2D point with basic arithmetic.
+#[derive(Clone, Copy, Debug)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
 }
 
-/// A best effort representation for image formats.
-#[derive(Clone, Debug, Hash, PartialEq)]
+impl Point {
+    pub fn new(x: f64, y: f64) -> Self {
+        Point { x, y }
+    }
+
+    pub fn add(&self, other: Point) -> Point {
+        Point::new(self.x + other.x, self.y + other.y)
+    }
+
+    pub fn sub(&self, other: Point) -> Point {
+        Point::new(self.x - other.x, self.y - other.y)
+    }
+
+    pub fn mul(&self, scalar: f64) -> Point {
+        Point::new(self.x * scalar, self.y * scalar)
+    }
+
+    pub fn div(&self, scalar: f64) -> Point {
+        Point::new(self.x / scalar, self.y / scalar)
+    }
+
+    pub fn dot(&self, other: Point) -> f64 {
+        self.x * other.x + self.y * other.y
+    }
+
+    pub fn norm(&self) -> f64 {
+        self.dot(*self).sqrt()
+    }
+
+    pub fn distance(&self, other: Point) -> f64 {
+        self.sub(other).norm()
+    }
+
+    pub fn normalize(&self) -> Point {
+        let n = self.norm();
+        if n.abs() < 1e-6 {
+            *self
+        } else {
+            self.div(n)
+        }
+    }
+}
+
+// A cubic Bézier curve represented by four control points.
+#[derive(Debug, Clone)]
+pub struct CubicBezier {
+    pub p0: Point,
+    pub p1: Point,
+    pub p2: Point,
+    pub p3: Point,
+}
+
+impl CubicBezier {
+    // Evaluate the Bézier curve at parameter t (0 <= t <= 1)
+    pub fn evaluate(&self, t: f64) -> Point {
+        let u = 1.0 - t;
+        // Bernstein basis form:
+        self.p0
+            .mul(u * u * u)
+            .add(self.p1.mul(3.0 * u * u * t))
+            .add(self.p2.mul(3.0 * u * t * t))
+            .add(self.p3.mul(t * t * t))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Segment {
+    Line { start: Point, end: Point },
+    Cubic(CubicBezier),
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub enum ImageFormatHint {
-    /// The format is known exactly.
-    Exact(ImageFormat),
-
-    /// The format can be identified by a name.
-    Name(String),
-
-    /// A common path extension for the format is known.
-    PathExtension(std::path::PathBuf),
-
+pub enum ImageFormat {
+    Png,
+    Jpeg,
+    Bmp,
+    WebP,
     /// The format is not known or could not be determined.
+    #[default]
     Unknown,
+}
+
+impl fmt::Display for ImageFormat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ImageFormat::Png => write!(f, "png"),
+            ImageFormat::Jpeg => write!(f, "jpeg"),
+            ImageFormat::Bmp => write!(f, "bmp"),
+            ImageFormat::WebP => write!(f, "webp"),
+            ImageFormat::Unknown => write!(f, "UNKNOWN"),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct DecodeError {
-    pub format: ImageFormatHint,
+    pub format: ImageFormat,
     pub underlying: Option<Box<dyn Error + Send + Sync>>,
 }
 
-pub type DecodeResult<T> = Result<T, DecodeError>;
+pub type DecodeResult = Result<DecodeImage, DecodeError>;
 
+#[derive(Clone, Default)]
 pub struct DecodeImage {
     pub pixels: Vec<Pixel>,
+    pub format: ImageFormat,
     pub width: u32,
     pub height: u32,
 }
 
-impl ImageFormat {
-    /// Return the image format specified by a path's file extension.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use image::ImageFormat;
-    ///
-    /// let format = ImageFormat::from_extension("jpg");
-    /// assert_eq!(format, Some(ImageFormat::Jpeg));
-    /// ```
-    #[inline]
-    pub fn from_extension<S>(ext: S) -> Option<Self>
-    where
-        S: AsRef<OsStr>,
-    {
-        // thin wrapper function to strip generics
-        fn inner(ext: &OsStr) -> Option<ImageFormat> {
-            let ext = ext.to_str()?.to_ascii_lowercase();
-
-            Some(match ext.as_str() {
-                "avif" => ImageFormat::Avif,
-                "jpg" | "jpeg" | "jfif" => ImageFormat::Jpeg,
-                "png" | "apng" => ImageFormat::Png,
-                "gif" => ImageFormat::Gif,
-                "webp" => ImageFormat::WebP,
-                "tif" | "tiff" => ImageFormat::Tiff,
-                "tga" => ImageFormat::Tga,
-                "dds" => ImageFormat::Dds,
-                "bmp" => ImageFormat::Bmp,
-                "ico" => ImageFormat::Ico,
-                "hdr" => ImageFormat::Hdr,
-                "exr" => ImageFormat::OpenExr,
-                "pbm" | "pam" | "ppm" | "pgm" => ImageFormat::Pnm,
-                "ff" => ImageFormat::Farbfeld,
-                "qoi" => ImageFormat::Qoi,
-                "pcx" => ImageFormat::Pcx,
-                _ => return None,
-            })
-        }
-
-        inner(ext.as_ref())
+impl DecodeImage {
+    pub fn new() -> Self {
+        Default::default()
     }
 
-    /// Return the image format specified by a MIME type.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use image::ImageFormat;
-    ///
-    /// let format = ImageFormat::from_mime_type("image/png").unwrap();
-    /// assert_eq!(format, ImageFormat::Png);
-    /// ```
-    pub fn from_mime_type<M>(mime_type: M) -> Option<Self>
-    where
-        M: AsRef<str>,
-    {
-        match mime_type.as_ref() {
-            "image/avif" => Some(ImageFormat::Avif),
-            "image/jpeg" => Some(ImageFormat::Jpeg),
-            "image/png" => Some(ImageFormat::Png),
-            "image/gif" => Some(ImageFormat::Gif),
-            "image/webp" => Some(ImageFormat::WebP),
-            "image/tiff" => Some(ImageFormat::Tiff),
-            "image/x-targa" | "image/x-tga" => Some(ImageFormat::Tga),
-            "image/vnd-ms.dds" => Some(ImageFormat::Dds),
-            "image/bmp" => Some(ImageFormat::Bmp),
-            "image/x-icon" => Some(ImageFormat::Ico),
-            "image/vnd.radiance" => Some(ImageFormat::Hdr),
-            "image/x-exr" => Some(ImageFormat::OpenExr),
-            "image/x-portable-bitmap"
-            | "image/x-portable-graymap"
-            | "image/x-portable-pixmap"
-            | "image/x-portable-anymap" => Some(ImageFormat::Pnm),
-            // Qoi's MIME type is being worked on.
-            // See: https://github.com/phoboslab/qoi/issues/167
-            "image/x-qoi" => Some(ImageFormat::Qoi),
-            "image/vnd.zbrush.pcx" | "image/x-pcx" => Some(ImageFormat::Pcx),
-            _ => None,
+    pub fn new_with(width: u32, height: u32) -> Self {
+        Self {
+            pixels: Vec::with_capacity((width * height) as usize),
+            width,
+            height,
+            format: Default::default(),
         }
     }
 
-    /// Return the MIME type for this image format or "application/octet-stream" if no MIME type
-    /// exists for the format.
-    ///
-    /// Some notes on a few of the MIME types:
-    ///
-    /// - The portable anymap format has a separate MIME type for the pixmap, graymap and bitmap
-    ///   formats, but this method returns the general "image/x-portable-anymap" MIME type.
-    /// - The Targa format has two common MIME types, "image/x-targa"  and "image/x-tga"; this
-    ///   method returns "image/x-targa" for that format.
-    /// - The QOI MIME type is still a work in progress. This method returns "image/x-qoi" for
-    ///   that format.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use image::ImageFormat;
-    ///
-    /// let mime_type = ImageFormat::Png.to_mime_type();
-    /// assert_eq!(mime_type, "image/png");
-    /// ```
-    #[must_use]
-    pub fn to_mime_type(&self) -> &'static str {
-        match self {
-            ImageFormat::Avif => "image/avif",
-            ImageFormat::Jpeg => "image/jpeg",
-            ImageFormat::Png => "image/png",
-            ImageFormat::Gif => "image/gif",
-            ImageFormat::WebP => "image/webp",
-            ImageFormat::Tiff => "image/tiff",
-            // the targa MIME type has two options, but this one seems to be used more
-            ImageFormat::Tga => "image/x-targa",
-            ImageFormat::Dds => "image/vnd-ms.dds",
-            ImageFormat::Bmp => "image/bmp",
-            ImageFormat::Ico => "image/x-icon",
-            ImageFormat::Hdr => "image/vnd.radiance",
-            ImageFormat::OpenExr => "image/x-exr",
-            // return the most general MIME type
-            ImageFormat::Pnm => "image/x-portable-anymap",
-            // Qoi's MIME type is being worked on.
-            // See: https://github.com/phoboslab/qoi/issues/167
-            ImageFormat::Qoi => "image/x-qoi",
-            // farbfeld's MIME type taken from https://www.wikidata.org/wiki/Q28206109
-            ImageFormat::Farbfeld => "application/octet-stream",
-            ImageFormat::Pcx => "image/vnd.zbrush.pcx",
-        }
+    pub fn get_pixel(&self, x: usize, y: usize) -> Pixel {
+        let index = y * self.width as usize + x;
+        self.get_pixel_at(index)
     }
 
-    /// Return if the `ImageFormat` can be decoded by the lib.
-    #[inline]
-    #[must_use]
-    pub fn can_read(&self) -> bool {
-        // Needs to be updated once a new variant's decoder is added to free_functions.rs::load
-        match self {
-            ImageFormat::Png => true,
-            ImageFormat::Gif => true,
-            ImageFormat::Jpeg => true,
-            ImageFormat::WebP => true,
-            ImageFormat::Tiff => true,
-            ImageFormat::Tga => true,
-            ImageFormat::Dds => false,
-            ImageFormat::Bmp => true,
-            ImageFormat::Ico => true,
-            ImageFormat::Hdr => true,
-            ImageFormat::OpenExr => true,
-            ImageFormat::Pnm => true,
-            ImageFormat::Farbfeld => true,
-            ImageFormat::Avif => true,
-            ImageFormat::Qoi => true,
-            ImageFormat::Pcx => true,
-        }
+    pub fn get_pixel_at(&self, index: usize) -> Pixel {
+        self.pixels[index]
     }
 
-    /// Return if the `ImageFormat` can be encoded by the lib.
-    #[inline]
-    #[must_use]
-    pub fn can_write(&self) -> bool {
-        // Needs to be updated once a new variant's encoder is added to free_functions.rs::save_buffer_with_format_impl
-        match self {
-            ImageFormat::Gif => true,
-            ImageFormat::Ico => true,
-            ImageFormat::Jpeg => true,
-            ImageFormat::Png => true,
-            ImageFormat::Bmp => true,
-            ImageFormat::Tiff => true,
-            ImageFormat::Tga => true,
-            ImageFormat::Pnm => true,
-            ImageFormat::Farbfeld => true,
-            ImageFormat::Avif => true,
-            ImageFormat::WebP => true,
-            ImageFormat::Hdr => true,
-            ImageFormat::OpenExr => true,
-            ImageFormat::Dds => false,
-            ImageFormat::Qoi => true,
-            ImageFormat::Pcx => false,
-        }
+    pub fn try_get_pixel(&self, x: usize, y: usize) -> Option<Pixel> {
+        let index = y * self.width as usize + x;
+        self.try_get_pixel_at(index)
     }
 
-    /// Return a list of applicable extensions for this format.
-    ///
-    /// All currently recognized image formats specify at least on extension but for future
-    /// compatibility you should not rely on this fact. The list may be empty if the format has no
-    /// recognized file representation, for example in case it is used as a purely transient memory
-    /// format.
-    ///
-    /// The method name `extensions` remains reserved for introducing another method in the future
-    /// that yields a slice of `OsStr` which is blocked by several features of const evaluation.
-    #[must_use]
-    pub fn extensions_str(self) -> &'static [&'static str] {
-        match self {
-            ImageFormat::Png => &["png"],
-            ImageFormat::Jpeg => &["jpg", "jpeg"],
-            ImageFormat::Gif => &["gif"],
-            ImageFormat::WebP => &["webp"],
-            ImageFormat::Pnm => &["pbm", "pam", "ppm", "pgm"],
-            ImageFormat::Tiff => &["tiff", "tif"],
-            ImageFormat::Tga => &["tga"],
-            ImageFormat::Dds => &["dds"],
-            ImageFormat::Bmp => &["bmp"],
-            ImageFormat::Ico => &["ico"],
-            ImageFormat::Hdr => &["hdr"],
-            ImageFormat::OpenExr => &["exr"],
-            ImageFormat::Farbfeld => &["ff"],
-            // According to: https://aomediacodec.github.io/av1-avif/#mime-registration
-            ImageFormat::Avif => &["avif"],
-            ImageFormat::Qoi => &["qoi"],
-            ImageFormat::Pcx => &["pcx"],
-        }
+    pub fn try_get_pixel_at(&self, index: usize) -> Option<Pixel> {
+        self.pixels.get(index).copied()
     }
 
-    /// Return all `ImageFormat`s
-    pub fn all() -> impl Iterator<Item = ImageFormat> {
-        [
-            ImageFormat::Gif,
-            ImageFormat::Ico,
-            ImageFormat::Jpeg,
-            ImageFormat::Png,
-            ImageFormat::Bmp,
-            ImageFormat::Tiff,
-            ImageFormat::Tga,
-            ImageFormat::Pnm,
-            ImageFormat::Farbfeld,
-            ImageFormat::Avif,
-            ImageFormat::WebP,
-            ImageFormat::OpenExr,
-            ImageFormat::Qoi,
-            ImageFormat::Dds,
-            ImageFormat::Hdr,
-            ImageFormat::Pcx,
-        ]
-        .iter()
-        .copied()
+    pub fn set_pixel(&mut self, x: usize, y: usize, pixel: &Pixel) {
+        let index = y * self.width as usize + x;
+        self.set_pixel_at(index, pixel);
+    }
+
+    pub fn set_pixel_at(&mut self, index: usize, pixel: &Pixel) {
+        self.pixels[index] = pixel.clone();
+    }
+
+    pub fn try_set_pixel(&mut self, x: usize, y: usize, pixel: &Pixel) {
+        let index = y * self.width as usize + x;
+        self.try_set_pixel_at(index, pixel);
+    }
+
+    pub fn try_set_pixel_at(&mut self, index: usize, pixel: &Pixel) {
+        if let Some(pixel_at) = self.pixels.get_mut(index) {
+            *pixel_at = pixel.clone();
+        }
     }
 }

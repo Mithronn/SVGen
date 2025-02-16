@@ -3,23 +3,39 @@ pub mod parsers;
 pub mod structs;
 pub mod utils;
 
-use std::path::Path;
+use std::{
+    io::{BufReader, Cursor},
+    path::Path,
+};
 
-use svg::node::element::path::Data;
-use svg::node::element::Path as SVGPath;
-use svg::Document;
+use image::{GrayImage, ImageReader};
+use imageproc::{
+    contours::{find_contours_with_threshold, Contour},
+    edges::canny,
+};
+use log::{info, trace, warn};
+use svg::{
+    node::element::{
+        path::{Command, Data, Position},
+        Definitions, Group, Path as SVGPath, Use,
+    },
+    Document, Node,
+};
 
-use constants::MARCHING_SQUARES;
 use parsers::{bytes_to_pixels, parse_chunks, parse_ihdr, parse_plte, parse_trns, read_png};
-use structs::{DecodeImage, DecodeResult, Pixel};
-use utils::{catmull_rom_spline, decompress_idat, interpolate};
+use structs::{DecodeImage, DecodeResult, ImageFormat, Point, Segment};
+use utils::{decompress_idat, fit_curve, generate_id, rdp, trunc};
 
-pub fn decode<P>(path: P) -> DecodeResult<DecodeImage>
+pub fn decode<P>(path: P) -> DecodeResult
 where
     P: AsRef<Path>,
 {
+    trace!("Image decode");
+
     let buffer = read_png(path.as_ref()).unwrap();
     let chunks = parse_chunks(&buffer);
+
+    info!("Parsed {} image chunks", chunks.len());
 
     // Extract IHDR, PLTE, tRNS
     let ihdr_chunk = chunks.iter().find(|c| c.type_str == "IHDR").unwrap();
@@ -27,7 +43,10 @@ where
     let plte = parse_plte(&chunks);
     let trns = parse_trns(&chunks);
 
-    println!("{ihdr:?}");
+    info!("Image Header(IHDR): {ihdr:?}");
+
+    // TODO: Other formats need to check "jpeg, bmp, webp"
+    let format = ImageFormat::Png;
 
     let idat_data: Vec<u8> = chunks
         .iter()
@@ -38,360 +57,193 @@ where
     let decompressed = decompress_idat(&idat_data);
     let pixels = bytes_to_pixels(&decompressed, &ihdr, &plte, &trns);
 
+    info!("Decoded {} image {}x{}", format, ihdr.width, ihdr.height);
+
     Ok(DecodeImage {
         pixels,
+        format,
         width: ihdr.width,
         height: ihdr.height,
     })
 }
 
-// pub fn create_svg<P>(pixels: &[Pixel], width: u32, height: u32, output_path: P) -> Result<(), ()>
-// where
-//     P: AsRef<Path>,
-// {
-//     // Track visited pixels to avoid overlap
-//     let mut visited = vec![vec![false; height as usize]; width as usize];
-//     let mut document = Document::new()
-//         .set("viewBox", (0, 0, width, height))
-//         .set("width", width)
-//         .set("height", height);
+pub fn create_svg(image_byte: &[u8]) -> String {
+    trace!("SVG Creation");
 
-//     for (i, pixel) in pixels.iter().enumerate() {
-//         let x = i as u32 % width;
-//         let y = i as u32 / width;
+    let image_reader = ImageReader::new(BufReader::new(Cursor::new(image_byte)))
+        .with_guessed_format()
+        .unwrap()
+        .decode()
+        .unwrap();
 
-//         if pixel.a == 0 || visited[x as usize][y as usize] {
-//             continue;
-//         }
+    info!(
+        "Image readed {}x{}",
+        image_reader.width(),
+        image_reader.height()
+    );
 
-//         let idx = y * width + x;
-//         let color = pixels[idx as usize];
-//         // let contours = find_contours(&img, x, y, Some(color), false);
+    let mut gray_image = image_reader.to_luma8();
 
-//         // let data = contours_to_path_data(&contours);
+    if gray_image.width() * gray_image.height() < 512 * 512 {
+        gray_image = upscale_image(&gray_image, 3);
+        warn!(
+            "Image size is small. Upscalled to {}x{}",
+            gray_image.width(),
+            gray_image.height()
+        );
+    }
 
-//         let path = SVGPath::new()
-//             .set(
-//                 "fill",
-//                 // format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b),
-//                 format!(
-//                     "rgba({}, {}, {}, {})",
-//                     color.r,
-//                     color.g,
-//                     color.b,
-//                     color.a as f32 / 255.0
-//                 ),
-//             )
-//             .set("stroke", "none") // Optional: removes border
-//             .set("d", data);
+    let low_threshold = 10.0 as f32;
+    let high_threshold = 60.0 as f32;
 
-//         document = document.add(path);
+    // TODO: FEATURE maybe ?
+    // let otsu_thresh = otsu_level(&gray_image);
+    // let low_threshold = otsu_thresh as f32 * 0.2;
+    // let high_threshold = otsu_thresh as f32;
 
-//         for contour in contours {
-//             for point in contour.points {
-//                 visited[(x + dx) as usize][(y + dy) as usize] = true
-//             }
-//         }
-//     }
+    gray_image = canny(&gray_image, low_threshold, high_threshold);
+    // gray_image = close_gaps(&gray_image);
 
-//     // Save the SVG document
-//     svg::save(output_path, &document).unwrap();
-//     Ok(())
-// }
-
-// // Convert detected contours to SVG path data
-// fn contours_to_path_data(contours: &[Contour]) -> Data {
-//     let mut data = Data::new();
-//     for contour in contours {
-//         data = data.move_to((contour.points[0].x, contour.points[0].y));
-//         for point in &contour.points[1..] {
-//             data = data.line_to((point.x, point.y));
-//         }
-//         data = data.close();
-//     }
-//     data
-// }
-
-// pub fn create_svg<P>(pixels: &[Pixel], width: u32, height: u32, output_path: P) -> Result<(), ()>
-pub fn create_svg(
-    // contours: &[(Vec<(usize, usize)>, (u8, u8, u8))],
-    // contours: &Vec<Vec<(usize, usize)>>,
-    contours: &Vec<Vec<(f64, f64)>>,
-    pixels: &[Pixel],
-    width: u32,
-    height: u32,
-) -> Result<String, ()> {
     let mut document = Document::new()
-        .set("viewBox", (0, 0, width, height))
-        .set("width", width)
-        .set("height", height);
+        .set("width", gray_image.width())
+        .set("height", gray_image.height())
+        .set("viewBox", (0, 0, gray_image.width(), gray_image.height()));
 
-    for contour in contours {
+    gray_image.save("assets/binary_image.png").unwrap();
+
+    let contours = find_contours_with_threshold::<u32>(&gray_image, 128);
+
+    // Set an error tolerance (in pixels)
+    let tolerance = 0.4;
+    contour_to_svg(&mut document, &contours, tolerance as f64);
+
+    info!(
+        "SVG created! Byte: {}",
+        document.to_string().as_bytes().len()
+    );
+
+    document.to_string()
+}
+
+fn upscale_image(img: &GrayImage, scale_factor: u32) -> GrayImage {
+    let (width, height) = (img.width() * scale_factor, img.height() * scale_factor);
+    image::imageops::resize(img, width, height, image::imageops::FilterType::CatmullRom)
+}
+
+pub fn contour_to_svg(document: &mut Document, contours: &[Contour<u32>], tolerance: f64) {
+    let mut defs = Definitions::new();
+    let mut stroke_group = Group::new().set("stroke-width", "1px");
+    let mut fill_group = Group::new();
+
+    for (i, contour) in contours.iter().enumerate() {
+        let simplified = contour
+            .points
+            .iter()
+            .map(|&p| Point::new(p.x as f64, p.y as f64))
+            .collect::<Vec<Point>>();
+
+        let simplify_tolerance = 2 as f64;
+        let simplified = rdp(&simplified, simplify_tolerance);
+        let segments = fit_curve(&simplified, tolerance);
+
+        // Build SVG path data
         let mut data = Data::new();
 
-        // Get the average color for this contour region
-        let avg_color = average_color_from_pixels(contour, pixels, width as usize);
-        let color = format!("rgb({}, {}, {})", avg_color.0, avg_color.1, avg_color.2);
-
-        if let Some(&(x, y)) = contour.first() {
-            data = data.move_to((x as f64, height as f64 - y as f64));
+        if let Some(first) = segments.first() {
+            let move_to = match first {
+                Segment::Line { start, .. } => (trunc(start.x), trunc(start.y)),
+                Segment::Cubic(curve) => (trunc(curve.p0.x), trunc(curve.p0.y)),
+            };
+            data.append(Command::Move(
+                Position::Absolute,
+                vec![move_to.0, move_to.1].into(),
+            ));
         }
 
-        for &(x, y) in contour.iter().skip(1) {
-            data = data.line_to((x as f64, height as f64 - y as f64));
-        }
-        // data = data.close();
-
-        let path = SVGPath::new()
-            .set("fill", color)
-            .set("stroke", "none")
-            // .set("stroke-width", 1)
-            .set("d", data);
-
-        document = document.add(path);
-    }
-    Ok(document.to_string())
-}
-
-// pub fn find_contours_with_colors(
-//     pixels: &[Pixel],
-//     width: usize,
-//     height: usize,
-// ) -> Vec<(Vec<(usize, usize)>, (u8, u8, u8))> {
-//     let binary_mask = pixels_to_binary_mask(pixels, width, height, 128);
-//     let mut visited = vec![false; width * height];
-//     let mut contours = Vec::new();
-
-//     for y in 0..height {
-//         for x in 0..width {
-//             let idx = y * width + x;
-//             if binary_mask[idx] == 255 && !visited[idx] {
-//                 let mut contour = Vec::new();
-//                 trace_contour(
-//                     &binary_mask,
-//                     width,
-//                     height,
-//                     x,
-//                     y,
-//                     &mut visited,
-//                     &mut contour,
-//                 );
-
-//                 // Get the average color of the contour region
-//                 let avg_color = average_color_from_pixels(&contour, pixels, width);
-//                 contours.push((contour, avg_color));
-//             }
-//         }
-//     }
-
-//     contours
-// }
-
-fn smooth_contours(contours: Vec<Vec<(f64, f64)>>) -> Vec<Vec<(f64, f64)>> {
-    contours
-        .into_iter()
-        .map(|contour| {
-            if contour.len() > 3 {
-                catmull_rom_spline(&contour, 0.5)
-            } else {
-                contour
-            }
-        })
-        .collect()
-}
-
-pub fn marching_squares(pixels: &[Pixel], width: usize, height: usize) -> Vec<Vec<(usize, usize)>> {
-    let mut contours = Vec::new();
-
-    for y in 0..height - 1 {
-        for x in 0..width - 1 {
-            let idx1 = y * width + x;
-            let idx2 = (y + 1) * width + x;
-            let idx3 = y * width + (x + 1);
-            let idx4 = (y + 1) * width + (x + 1);
-
-            // Create a binary map for the 2x2 block
-            let binary = [
-                if pixels[idx1].a > 128 { 1 } else { 0 },
-                if pixels[idx2].a > 128 { 1 } else { 0 },
-                if pixels[idx3].a > 128 { 1 } else { 0 },
-                if pixels[idx4].a > 128 { 1 } else { 0 },
-            ];
-
-            let square_index = binary[0] * 8 + binary[1] * 4 + binary[2] * 2 + binary[3];
-
-            if square_index != 0 && square_index != 15 {
-                let contour = match MARCHING_SQUARES[square_index] {
-                    (0.5, 0.0) => vec![(x, y)],         // Simple case for demonstration
-                    (1.0, 0.5) => vec![(x + 1, y + 1)], // Another case
-                    _ => vec![],                        // Add other cases for more complex contours
-                };
-
-                contours.push(contour);
-            }
-        }
-    }
-
-    contours
-}
-
-fn marching_squares_interpolated(
-    pixels: &[Pixel],
-    width: usize,
-    height: usize,
-) -> Vec<Vec<(f64, f64)>> {
-    let mut contours = Vec::new();
-
-    for y in 0..height - 1 {
-        for x in 0..width - 1 {
-            let idx1 = y * width + x;
-            let idx2 = (y + 1) * width + x;
-            let idx3 = y * width + (x + 1);
-            let idx4 = (y + 1) * width + (x + 1);
-
-            // Create a binary map for the 2x2 block
-            let binary = [
-                if pixels[idx1].a > 128 { 1 } else { 0 },
-                if pixels[idx2].a > 128 { 1 } else { 0 },
-                if pixels[idx3].a > 128 { 1 } else { 0 },
-                if pixels[idx4].a > 128 { 1 } else { 0 },
-            ];
-
-            let square_index = binary[0] * 8 + binary[1] * 4 + binary[2] * 2 + binary[3];
-
-            if square_index != 0 && square_index != 15 {
-                let mut contour = Vec::new();
-
-                // Interpolate between the edges of the 2x2 square
-                match square_index {
-                    1 => {
-                        contour.push(interpolate((x, y), (x, y + 1), binary[0], binary[1]));
-                    }
-                    2 => {
-                        contour.push(interpolate((x, y), (x + 1, y), binary[0], binary[2]));
-                    }
-                    3 => {
-                        contour.push(interpolate((x, y), (x + 1, y), binary[0], binary[2]));
-                        contour.push(interpolate(
-                            (x, y + 1),
-                            (x + 1, y + 1),
-                            binary[1],
-                            binary[3],
-                        ));
-                    }
-                    // Add more cases based on the marching squares lookup table
-                    _ => {}
+        for segment in &segments {
+            match segment {
+                Segment::Line { end, .. } => {
+                    data.append(Command::Line(
+                        Position::Absolute,
+                        vec![trunc(end.x), trunc(end.y)].into(),
+                    ));
                 }
-
-                contours.push(contour);
-            }
-        }
-    }
-
-    contours
-}
-
-fn trace_contour(
-    image: &[u8],
-    width: usize,
-    height: usize,
-    start_x: usize,
-    start_y: usize,
-    visited: &mut [bool],
-    contour: &mut Vec<(usize, usize)>,
-) {
-    let directions = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-    let mut x = start_x;
-    let mut y = start_y;
-
-    loop {
-        contour.push((x, y));
-        visited[y * width + x] = true;
-
-        let mut found_next = false;
-        for &(dx, dy) in &directions {
-            let nx = x as isize + dx;
-            let ny = y as isize + dy;
-
-            if nx >= 0 && nx < width as isize && ny >= 0 && ny < height as isize {
-                let nidx = ny as usize * width + nx as usize;
-                if image[nidx] == 255 && !visited[nidx] {
-                    x = nx as usize;
-                    y = ny as usize;
-                    found_next = true;
-                    break;
+                Segment::Cubic(curve) => {
+                    data.append(Command::CubicCurve(
+                        Position::Absolute,
+                        vec![
+                            trunc(curve.p1.x),
+                            trunc(curve.p1.y),
+                            trunc(curve.p2.x),
+                            trunc(curve.p2.y),
+                            trunc(curve.p3.x),
+                            trunc(curve.p3.y),
+                        ]
+                        .into(),
+                    ));
                 }
             }
         }
 
-        if !found_next {
-            break;
+        if !data.is_empty() {
+            data.append(Command::Close);
+
+            let id = generate_id(i);
+
+            let path = SVGPath::new().set("id", id.clone()).set("d", data);
+
+            let stroke = Use::new()
+                .set("href", format!("#{id}"))
+                .set("stroke", "black");
+
+            let fill = Use::new().set("href", format!("#{id}")).set("fill", "none");
+
+            defs.append(path);
+            stroke_group.append(stroke);
+            fill_group.append(fill);
         }
     }
-}
 
-fn average_color_from_pixels(
-    // contour: &[(usize, usize)],
-    contour: &[(f64, f64)],
-    pixels: &[Pixel],
-    width: usize,
-) -> (u8, u8, u8) {
-    let mut r_sum = 0;
-    let mut g_sum = 0;
-    let mut b_sum = 0;
-    let mut count = 0;
-
-    for &(x, y) in contour {
-        let idx = y as usize * width + x as usize;
-        let pixel = pixels[idx];
-
-        r_sum += pixel.r as u32;
-        g_sum += pixel.g as u32;
-        b_sum += pixel.b as u32;
-        count += 1;
-    }
-
-    if count > 0 {
-        (
-            (r_sum / count) as u8,
-            (g_sum / count) as u8,
-            (b_sum / count) as u8,
-        )
-    } else {
-        (0, 0, 0) // Default black if no valid pixels
-    }
-}
-
-fn pixels_to_binary_mask(pixels: &[Pixel], width: usize, height: usize, threshold: u8) -> Vec<u8> {
-    let mut mask = vec![0; width * height];
-
-    for (i, pixel) in pixels.iter().enumerate() {
-        let gray = (0.299 * pixel.r as f32 + 0.587 * pixel.g as f32 + 0.114 * pixel.b as f32) as u8;
-        mask[i] = if gray > threshold && pixel.a > 128 {
-            255
-        } else {
-            0
-        };
-    }
-
-    mask
+    document.append(defs);
+    document.append(stroke_group);
+    document.append(fill_group);
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{fs::File, io::Read};
+
     use crate::structs::Pixel;
 
     use super::*;
-    use image::{ImageBuffer, RgbaImage};
+    use image::ImageBuffer;
+
+    fn init_logger() {
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            .try_init();
+    }
+
+    fn save_as_png(pixels: &[Pixel], width: u32, height: u32, path: &str) {
+        let mut img = ImageBuffer::new(width, height);
+        for (i, pixel) in pixels.iter().enumerate() {
+            let x = i as u32 % width;
+            let y = i as u32 / width;
+            img.put_pixel(x, y, image::Rgba([pixel.r, pixel.g, pixel.b, pixel.a]));
+        }
+        img.save(path).unwrap();
+    }
 
     #[test]
     fn decode_to_file() {
-        let decoded_image = decode("assets/image.png").unwrap();
+        init_logger();
+
+        let decoded_image = decode("assets/hurricane.png").unwrap();
         save_as_png(
             &decoded_image.pixels,
             decoded_image.width,
             decoded_image.height,
-            "assets/output.bmp",
+            "assets/hurricane.bmp",
         );
 
         let img = image::ImageReader::open("assets/image.png")
@@ -403,43 +255,14 @@ mod tests {
 
     #[test]
     fn decode_to_svg() {
-        let decoded_image = decode("assets/image.png").unwrap();
-        // let contours = find_contours_with_colors(
-        //     &decoded_image.pixels,
-        //     decoded_image.width as usize,
-        //     decoded_image.height as usize,
-        // );
+        init_logger();
 
-        // let contours = marching_squares(
-        //     &decoded_image.pixels,
-        //     decoded_image.width as usize,
-        //     decoded_image.height as usize,
-        // );
-        let contours = marching_squares_interpolated(
-            &decoded_image.pixels,
-            decoded_image.width as usize,
-            decoded_image.height as usize,
-        );
-        let smoothed_contours = smooth_contours(contours);
+        let mut file = File::open("assets/hurricane.png").unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
 
-        let svg_string = create_svg(
-            &smoothed_contours,
-            &decoded_image.pixels,
-            decoded_image.width,
-            decoded_image.height,
-        )
-        .unwrap();
+        let svg_string = create_svg(&buffer);
 
         std::fs::write("assets/generated.svg", svg_string).expect("Unable to write file");
-    }
-
-    fn save_as_png(pixels: &[Pixel], width: u32, height: u32, path: &str) {
-        let mut img: RgbaImage = ImageBuffer::new(width, height);
-        for (i, pixel) in pixels.iter().enumerate() {
-            let x = i as u32 % width;
-            let y = i as u32 / width;
-            img.put_pixel(x, y, image::Rgba([pixel.r, pixel.g, pixel.b, pixel.a]));
-        }
-        img.save(path).unwrap();
     }
 }
