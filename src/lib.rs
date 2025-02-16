@@ -4,6 +4,7 @@ pub mod structs;
 pub mod utils;
 
 use std::{
+    collections::HashMap,
     io::{BufReader, Cursor},
     path::Path,
 };
@@ -135,6 +136,9 @@ pub fn contour_to_svg(document: &mut Document, contours: &[Contour<u32>], tolera
     let mut stroke_group = Group::new().set("stroke-width", "1px");
     let mut fill_group = Group::new();
 
+    let mut strokes: HashMap<String, Vec<String>> = HashMap::new();
+    let mut fills: HashMap<String, Vec<String>> = HashMap::new();
+
     for (i, contour) in contours.iter().enumerate() {
         let simplified = contour
             .points
@@ -191,17 +195,40 @@ pub fn contour_to_svg(document: &mut Document, contours: &[Contour<u32>], tolera
             let id = generate_id(i);
 
             let path = SVGPath::new().set("id", id.clone()).set("d", data);
-
-            let stroke = Use::new()
-                .set("href", format!("#{id}"))
-                .set("stroke", "black");
-
-            let fill = Use::new().set("href", format!("#{id}")).set("fill", "none");
-
             defs.append(path);
-            stroke_group.append(stroke);
-            fill_group.append(fill);
+
+            strokes
+                .entry("black".to_string())
+                .or_insert_with(Vec::new)
+                .push(id.clone());
+
+            fills
+                .entry("none".to_string())
+                .or_insert_with(Vec::new)
+                .push(id);
         }
+    }
+
+    for (stroke, ids) in strokes.iter() {
+        let mut group = Group::new().set("stroke", stroke.clone());
+
+        for id in ids {
+            let stroke_use = Use::new().set("href", format!("#{id}"));
+            group.append(stroke_use);
+        }
+
+        stroke_group.append(group);
+    }
+
+    for (fill, ids) in fills.iter() {
+        let mut group = Group::new().set("fill", fill.clone());
+
+        for id in ids {
+            let stroke_use = Use::new().set("href", format!("#{id}"));
+            group.append(stroke_use);
+        }
+
+        fill_group.append(group);
     }
 
     document.append(defs);

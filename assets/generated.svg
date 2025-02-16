@@ -96,195 +96,199 @@
 <path d="M717,646 L684,651 L674,651 L669,647 L621,667 L668,649 L684,651 L718,646 L718,646 z" id="bZ"/>
 </defs>
 <g stroke-width="1px">
-<use href="#a" stroke="black"/>
-<use href="#b" stroke="black"/>
-<use href="#c" stroke="black"/>
-<use href="#d" stroke="black"/>
-<use href="#e" stroke="black"/>
-<use href="#f" stroke="black"/>
-<use href="#g" stroke="black"/>
-<use href="#h" stroke="black"/>
-<use href="#i" stroke="black"/>
-<use href="#j" stroke="black"/>
-<use href="#k" stroke="black"/>
-<use href="#l" stroke="black"/>
-<use href="#m" stroke="black"/>
-<use href="#n" stroke="black"/>
-<use href="#o" stroke="black"/>
-<use href="#p" stroke="black"/>
-<use href="#q" stroke="black"/>
-<use href="#r" stroke="black"/>
-<use href="#s" stroke="black"/>
-<use href="#t" stroke="black"/>
-<use href="#u" stroke="black"/>
-<use href="#v" stroke="black"/>
-<use href="#w" stroke="black"/>
-<use href="#x" stroke="black"/>
-<use href="#z" stroke="black"/>
-<use href="#C" stroke="black"/>
-<use href="#F" stroke="black"/>
-<use href="#G" stroke="black"/>
-<use href="#H" stroke="black"/>
-<use href="#I" stroke="black"/>
-<use href="#J" stroke="black"/>
-<use href="#K" stroke="black"/>
-<use href="#L" stroke="black"/>
-<use href="#M" stroke="black"/>
-<use href="#N" stroke="black"/>
-<use href="#O" stroke="black"/>
-<use href="#P" stroke="black"/>
-<use href="#Q" stroke="black"/>
-<use href="#R" stroke="black"/>
-<use href="#S" stroke="black"/>
-<use href="#T" stroke="black"/>
-<use href="#U" stroke="black"/>
-<use href="#V" stroke="black"/>
-<use href="#W" stroke="black"/>
-<use href="#X" stroke="black"/>
-<use href="#Y" stroke="black"/>
-<use href="#Z" stroke="black"/>
-<use href="#ba" stroke="black"/>
-<use href="#bb" stroke="black"/>
-<use href="#bc" stroke="black"/>
-<use href="#bd" stroke="black"/>
-<use href="#be" stroke="black"/>
-<use href="#bf" stroke="black"/>
-<use href="#bg" stroke="black"/>
-<use href="#bh" stroke="black"/>
-<use href="#bi" stroke="black"/>
-<use href="#bj" stroke="black"/>
-<use href="#bk" stroke="black"/>
-<use href="#bm" stroke="black"/>
-<use href="#bn" stroke="black"/>
-<use href="#bo" stroke="black"/>
-<use href="#bq" stroke="black"/>
-<use href="#br" stroke="black"/>
-<use href="#bs" stroke="black"/>
-<use href="#bt" stroke="black"/>
-<use href="#bu" stroke="black"/>
-<use href="#bv" stroke="black"/>
-<use href="#bw" stroke="black"/>
-<use href="#bx" stroke="black"/>
-<use href="#by" stroke="black"/>
-<use href="#bz" stroke="black"/>
-<use href="#bA" stroke="black"/>
-<use href="#bB" stroke="black"/>
-<use href="#bC" stroke="black"/>
-<use href="#bD" stroke="black"/>
-<use href="#bF" stroke="black"/>
-<use href="#bG" stroke="black"/>
-<use href="#bH" stroke="black"/>
-<use href="#bI" stroke="black"/>
-<use href="#bJ" stroke="black"/>
-<use href="#bK" stroke="black"/>
-<use href="#bL" stroke="black"/>
-<use href="#bM" stroke="black"/>
-<use href="#bO" stroke="black"/>
-<use href="#bP" stroke="black"/>
-<use href="#bQ" stroke="black"/>
-<use href="#bR" stroke="black"/>
-<use href="#bS" stroke="black"/>
-<use href="#bT" stroke="black"/>
-<use href="#bU" stroke="black"/>
-<use href="#bV" stroke="black"/>
-<use href="#bW" stroke="black"/>
-<use href="#bX" stroke="black"/>
-<use href="#bZ" stroke="black"/>
+<g stroke="black">
+<use href="#a"/>
+<use href="#b"/>
+<use href="#c"/>
+<use href="#d"/>
+<use href="#e"/>
+<use href="#f"/>
+<use href="#g"/>
+<use href="#h"/>
+<use href="#i"/>
+<use href="#j"/>
+<use href="#k"/>
+<use href="#l"/>
+<use href="#m"/>
+<use href="#n"/>
+<use href="#o"/>
+<use href="#p"/>
+<use href="#q"/>
+<use href="#r"/>
+<use href="#s"/>
+<use href="#t"/>
+<use href="#u"/>
+<use href="#v"/>
+<use href="#w"/>
+<use href="#x"/>
+<use href="#z"/>
+<use href="#C"/>
+<use href="#F"/>
+<use href="#G"/>
+<use href="#H"/>
+<use href="#I"/>
+<use href="#J"/>
+<use href="#K"/>
+<use href="#L"/>
+<use href="#M"/>
+<use href="#N"/>
+<use href="#O"/>
+<use href="#P"/>
+<use href="#Q"/>
+<use href="#R"/>
+<use href="#S"/>
+<use href="#T"/>
+<use href="#U"/>
+<use href="#V"/>
+<use href="#W"/>
+<use href="#X"/>
+<use href="#Y"/>
+<use href="#Z"/>
+<use href="#ba"/>
+<use href="#bb"/>
+<use href="#bc"/>
+<use href="#bd"/>
+<use href="#be"/>
+<use href="#bf"/>
+<use href="#bg"/>
+<use href="#bh"/>
+<use href="#bi"/>
+<use href="#bj"/>
+<use href="#bk"/>
+<use href="#bm"/>
+<use href="#bn"/>
+<use href="#bo"/>
+<use href="#bq"/>
+<use href="#br"/>
+<use href="#bs"/>
+<use href="#bt"/>
+<use href="#bu"/>
+<use href="#bv"/>
+<use href="#bw"/>
+<use href="#bx"/>
+<use href="#by"/>
+<use href="#bz"/>
+<use href="#bA"/>
+<use href="#bB"/>
+<use href="#bC"/>
+<use href="#bD"/>
+<use href="#bF"/>
+<use href="#bG"/>
+<use href="#bH"/>
+<use href="#bI"/>
+<use href="#bJ"/>
+<use href="#bK"/>
+<use href="#bL"/>
+<use href="#bM"/>
+<use href="#bO"/>
+<use href="#bP"/>
+<use href="#bQ"/>
+<use href="#bR"/>
+<use href="#bS"/>
+<use href="#bT"/>
+<use href="#bU"/>
+<use href="#bV"/>
+<use href="#bW"/>
+<use href="#bX"/>
+<use href="#bZ"/>
+</g>
 </g>
 <g>
-<use fill="none" href="#a"/>
-<use fill="none" href="#b"/>
-<use fill="none" href="#c"/>
-<use fill="none" href="#d"/>
-<use fill="none" href="#e"/>
-<use fill="none" href="#f"/>
-<use fill="none" href="#g"/>
-<use fill="none" href="#h"/>
-<use fill="none" href="#i"/>
-<use fill="none" href="#j"/>
-<use fill="none" href="#k"/>
-<use fill="none" href="#l"/>
-<use fill="none" href="#m"/>
-<use fill="none" href="#n"/>
-<use fill="none" href="#o"/>
-<use fill="none" href="#p"/>
-<use fill="none" href="#q"/>
-<use fill="none" href="#r"/>
-<use fill="none" href="#s"/>
-<use fill="none" href="#t"/>
-<use fill="none" href="#u"/>
-<use fill="none" href="#v"/>
-<use fill="none" href="#w"/>
-<use fill="none" href="#x"/>
-<use fill="none" href="#z"/>
-<use fill="none" href="#C"/>
-<use fill="none" href="#F"/>
-<use fill="none" href="#G"/>
-<use fill="none" href="#H"/>
-<use fill="none" href="#I"/>
-<use fill="none" href="#J"/>
-<use fill="none" href="#K"/>
-<use fill="none" href="#L"/>
-<use fill="none" href="#M"/>
-<use fill="none" href="#N"/>
-<use fill="none" href="#O"/>
-<use fill="none" href="#P"/>
-<use fill="none" href="#Q"/>
-<use fill="none" href="#R"/>
-<use fill="none" href="#S"/>
-<use fill="none" href="#T"/>
-<use fill="none" href="#U"/>
-<use fill="none" href="#V"/>
-<use fill="none" href="#W"/>
-<use fill="none" href="#X"/>
-<use fill="none" href="#Y"/>
-<use fill="none" href="#Z"/>
-<use fill="none" href="#ba"/>
-<use fill="none" href="#bb"/>
-<use fill="none" href="#bc"/>
-<use fill="none" href="#bd"/>
-<use fill="none" href="#be"/>
-<use fill="none" href="#bf"/>
-<use fill="none" href="#bg"/>
-<use fill="none" href="#bh"/>
-<use fill="none" href="#bi"/>
-<use fill="none" href="#bj"/>
-<use fill="none" href="#bk"/>
-<use fill="none" href="#bm"/>
-<use fill="none" href="#bn"/>
-<use fill="none" href="#bo"/>
-<use fill="none" href="#bq"/>
-<use fill="none" href="#br"/>
-<use fill="none" href="#bs"/>
-<use fill="none" href="#bt"/>
-<use fill="none" href="#bu"/>
-<use fill="none" href="#bv"/>
-<use fill="none" href="#bw"/>
-<use fill="none" href="#bx"/>
-<use fill="none" href="#by"/>
-<use fill="none" href="#bz"/>
-<use fill="none" href="#bA"/>
-<use fill="none" href="#bB"/>
-<use fill="none" href="#bC"/>
-<use fill="none" href="#bD"/>
-<use fill="none" href="#bF"/>
-<use fill="none" href="#bG"/>
-<use fill="none" href="#bH"/>
-<use fill="none" href="#bI"/>
-<use fill="none" href="#bJ"/>
-<use fill="none" href="#bK"/>
-<use fill="none" href="#bL"/>
-<use fill="none" href="#bM"/>
-<use fill="none" href="#bO"/>
-<use fill="none" href="#bP"/>
-<use fill="none" href="#bQ"/>
-<use fill="none" href="#bR"/>
-<use fill="none" href="#bS"/>
-<use fill="none" href="#bT"/>
-<use fill="none" href="#bU"/>
-<use fill="none" href="#bV"/>
-<use fill="none" href="#bW"/>
-<use fill="none" href="#bX"/>
-<use fill="none" href="#bZ"/>
+<g fill="none">
+<use href="#a"/>
+<use href="#b"/>
+<use href="#c"/>
+<use href="#d"/>
+<use href="#e"/>
+<use href="#f"/>
+<use href="#g"/>
+<use href="#h"/>
+<use href="#i"/>
+<use href="#j"/>
+<use href="#k"/>
+<use href="#l"/>
+<use href="#m"/>
+<use href="#n"/>
+<use href="#o"/>
+<use href="#p"/>
+<use href="#q"/>
+<use href="#r"/>
+<use href="#s"/>
+<use href="#t"/>
+<use href="#u"/>
+<use href="#v"/>
+<use href="#w"/>
+<use href="#x"/>
+<use href="#z"/>
+<use href="#C"/>
+<use href="#F"/>
+<use href="#G"/>
+<use href="#H"/>
+<use href="#I"/>
+<use href="#J"/>
+<use href="#K"/>
+<use href="#L"/>
+<use href="#M"/>
+<use href="#N"/>
+<use href="#O"/>
+<use href="#P"/>
+<use href="#Q"/>
+<use href="#R"/>
+<use href="#S"/>
+<use href="#T"/>
+<use href="#U"/>
+<use href="#V"/>
+<use href="#W"/>
+<use href="#X"/>
+<use href="#Y"/>
+<use href="#Z"/>
+<use href="#ba"/>
+<use href="#bb"/>
+<use href="#bc"/>
+<use href="#bd"/>
+<use href="#be"/>
+<use href="#bf"/>
+<use href="#bg"/>
+<use href="#bh"/>
+<use href="#bi"/>
+<use href="#bj"/>
+<use href="#bk"/>
+<use href="#bm"/>
+<use href="#bn"/>
+<use href="#bo"/>
+<use href="#bq"/>
+<use href="#br"/>
+<use href="#bs"/>
+<use href="#bt"/>
+<use href="#bu"/>
+<use href="#bv"/>
+<use href="#bw"/>
+<use href="#bx"/>
+<use href="#by"/>
+<use href="#bz"/>
+<use href="#bA"/>
+<use href="#bB"/>
+<use href="#bC"/>
+<use href="#bD"/>
+<use href="#bF"/>
+<use href="#bG"/>
+<use href="#bH"/>
+<use href="#bI"/>
+<use href="#bJ"/>
+<use href="#bK"/>
+<use href="#bL"/>
+<use href="#bM"/>
+<use href="#bO"/>
+<use href="#bP"/>
+<use href="#bQ"/>
+<use href="#bR"/>
+<use href="#bS"/>
+<use href="#bT"/>
+<use href="#bU"/>
+<use href="#bV"/>
+<use href="#bW"/>
+<use href="#bX"/>
+<use href="#bZ"/>
+</g>
 </g>
 </svg>
