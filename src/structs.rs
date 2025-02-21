@@ -48,52 +48,139 @@ pub struct Pixel {
 }
 
 // A simple 2D point with basic arithmetic.
-#[derive(Clone, Copy, Debug)]
+// #[derive(Clone, Copy, Debug)]
+// pub struct Point {
+//     pub x: f64,
+//     pub y: f64,
+// }
+
+// impl Point {
+//     pub fn new(x: f64, y: f64) -> Self {
+//         Point { x, y }
+//     }
+
+//     #[inline]
+//     pub fn add(&self, other: Point) -> Point {
+//         Point::new(self.x + other.x, self.y + other.y)
+//     }
+
+//     #[inline]
+//     pub fn sub(&self, other: Point) -> Point {
+//         Point::new(self.x - other.x, self.y - other.y)
+//     }
+
+//     #[inline]
+//     pub fn mul(&self, scalar: f64) -> Point {
+//         Point::new(self.x * scalar, self.y * scalar)
+//     }
+
+//     #[inline]
+//     pub fn div(&self, scalar: f64) -> Point {
+//         Point::new(self.x / scalar, self.y / scalar)
+//     }
+
+//     #[inline]
+//     pub fn dot(&self, other: Point) -> f64 {
+//         self.x * other.x + self.y * other.y
+//     }
+
+//     #[inline]
+//     pub fn norm(&self) -> f64 {
+//         self.dot(*self).sqrt()
+//     }
+
+//     #[inline]
+//     pub fn distance(&self, other: Point) -> f64 {
+//         self.sub(other).norm()
+//     }
+
+//     #[inline]
+//     pub fn normalize(&self) -> Point {
+//         let n = self.norm();
+//         if n.abs() < 1e-6 {
+//             *self
+//         } else {
+//             self.div(n)
+//         }
+//     }
+// }
+
+pub type Float = f64;
+
+/// A 2D point
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct Point {
-    pub x: f64,
-    pub y: f64,
+    pub x: Float,
+    pub y: Float,
+}
+
+impl fmt::Debug for Point {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{{\"x\":{},\"y\":{}}}", self.x, self.y)
+    }
 }
 
 impl Point {
-    pub fn new(x: f64, y: f64) -> Self {
+    pub fn new(x: f64, y: f64) -> Point {
         Point { x, y }
     }
-
-    pub fn add(&self, other: Point) -> Point {
-        Point::new(self.x + other.x, self.y + other.y)
-    }
-
-    pub fn sub(&self, other: Point) -> Point {
-        Point::new(self.x - other.x, self.y - other.y)
-    }
-
-    pub fn mul(&self, scalar: f64) -> Point {
-        Point::new(self.x * scalar, self.y * scalar)
-    }
-
-    pub fn div(&self, scalar: f64) -> Point {
-        Point::new(self.x / scalar, self.y / scalar)
-    }
-
-    pub fn dot(&self, other: Point) -> f64 {
-        self.x * other.x + self.y * other.y
-    }
-
-    pub fn norm(&self) -> f64 {
-        self.dot(*self).sqrt()
-    }
-
-    pub fn distance(&self, other: Point) -> f64 {
-        self.sub(other).norm()
-    }
-
-    pub fn normalize(&self) -> Point {
-        let n = self.norm();
-        if n.abs() < 1e-6 {
-            *self
-        } else {
-            self.div(n)
+    #[inline]
+    pub fn add(&self, p: Point) -> Point {
+        Point {
+            x: self.x + p.x,
+            y: self.y + p.y,
         }
+    }
+
+    #[inline]
+    pub fn subtract(&self, p: Point) -> Point {
+        Point {
+            x: self.x - p.x,
+            y: self.y - p.y,
+        }
+    }
+
+    #[inline]
+    pub fn multiply(&self, f: Float) -> Point {
+        Point {
+            x: self.x * f,
+            y: self.y * f,
+        }
+    }
+
+    #[inline]
+    pub fn negate(&self) -> Point {
+        Point {
+            x: -self.x,
+            y: -self.y,
+        }
+    }
+
+    #[inline]
+    pub fn distance(&self, p: Point) -> Float {
+        let dx = p.x - self.x;
+        let dy = p.y - self.y;
+        dx.hypot(dy)
+    }
+
+    #[inline]
+    pub fn dot(&self, p: Point) -> Float {
+        self.x * p.x + self.y * p.y
+    }
+
+    #[inline]
+    pub fn normalize(&self, length: Float) -> Point {
+        let current = self.x.hypot(self.y);
+        let scale = if current.abs() > Float::EPSILON {
+            length / current
+        } else {
+            0.0
+        };
+        let res = Point {
+            x: self.x * scale,
+            y: self.y * scale,
+        };
+        res
     }
 }
 
@@ -112,10 +199,10 @@ impl CubicBezier {
         let u = 1.0 - t;
         // Bernstein basis form:
         self.p0
-            .mul(u * u * u)
-            .add(self.p1.mul(3.0 * u * u * t))
-            .add(self.p2.mul(3.0 * u * t * t))
-            .add(self.p3.mul(t * t * t))
+            .multiply(u * u * u)
+            .add(self.p1.multiply(3.0 * u * u * t))
+            .add(self.p2.multiply(3.0 * u * t * t))
+            .add(self.p3.multiply(t * t * t))
     }
 }
 

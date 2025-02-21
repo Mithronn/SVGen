@@ -1,5 +1,7 @@
+pub mod color_reducer;
 pub mod constants;
 pub mod parsers;
+pub mod path_simplify;
 pub mod structs;
 pub mod utils;
 
@@ -9,6 +11,7 @@ use std::{
     path::Path,
 };
 
+use geo::{Coord, LineString, Simplify};
 use imageproc::{
     contours::find_contours_with_threshold,
     image::{
@@ -26,8 +29,9 @@ use svg::{
 };
 
 use parsers::{bytes_to_pixels, parse_chunks, parse_ihdr, parse_plte, parse_trns, read_png};
+use path_simplify::simplify;
 use structs::{DecodeImage, DecodeResult, ImageFormat, Point, Segment};
-use utils::{decompress_idat, fit_curve, generate_id, rdp, trunc};
+use utils::{decompress_idat, generate_id, trunc};
 
 pub fn decode<P>(path: P) -> DecodeResult
 where
@@ -131,7 +135,11 @@ pub fn create_svg(image_byte: &[u8]) -> String {
         // Build a binary mask for the current color
         let mut mask: GrayImage = GrayImage::new(width, height);
         for (x, y, pixel) in quantized_image.enumerate_pixels() {
-            let (r, g, b, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
+            let r = (pixel[0] / quantization_factor) * quantization_factor;
+            let g = (pixel[1] / quantization_factor) * quantization_factor;
+            let b = (pixel[2] / quantization_factor) * quantization_factor;
+            let a = pixel[3];
+
             if (r, g, b) == color && a > 0 {
                 mask.put_pixel(x, y, Luma([255]));
             } else {
@@ -149,13 +157,28 @@ pub fn create_svg(image_byte: &[u8]) -> String {
             let simplified = contour
                 .points
                 .iter()
+                .map(|&p| Coord {
+                    x: p.x as f64,
+                    y: p.y as f64,
+                })
+                .collect::<Vec<Coord>>();
+
+            let rdp_tolerance = 1 as f64;
+            let point_simplify_tolerance = 0.1 as f64;
+            let coords = LineString::from(simplified).simplify(&rdp_tolerance);
+
+            let simplified = coords
+                .0
+                .iter()
                 .map(|&p| Point::new(p.x as f64, p.y as f64))
                 .collect::<Vec<Point>>();
 
-            let tolerance = 1 as f64;
-            let simplify_tolerance = 2 as f64;
-            let simplified = rdp(&simplified, simplify_tolerance);
-            let segments = fit_curve(&simplified, tolerance);
+            let segments = simplify(&simplified, point_simplify_tolerance);
+            let segments = if segments.is_some() {
+                segments.unwrap()
+            } else {
+                continue;
+            };
 
             // Build SVG path data
             let mut data = Data::new();
@@ -226,14 +249,14 @@ pub fn create_svg(image_byte: &[u8]) -> String {
     }
 
     for (fill, ids) in fills.iter() {
-        let mut group = Group::new().set("fill", fill.clone());
+        // let mut group = Group::new().set("fill", fill.clone());
 
-        for id in ids {
-            let stroke_use = Use::new().set("href", format!("#{id}"));
-            group.append(stroke_use);
-        }
+        // for id in ids {
+        //     let stroke_use = Use::new().set("href", format!("#{id}"));
+        //     group.append(stroke_use);
+        // }
 
-        fill_group.append(group);
+        // fill_group.append(group);
     }
 
     document.append(defs);
@@ -252,6 +275,7 @@ pub fn create_svg(image_byte: &[u8]) -> String {
 mod tests {
     use std::{fs::File, io::Read};
 
+    use crate::color_reducer::ColorReducer;
     use crate::structs::Pixel;
 
     use super::*;
@@ -296,12 +320,61 @@ mod tests {
     fn decode_to_svg() {
         init_logger();
 
-        let mut file = File::open("assets/hurricane.png").unwrap();
+        let mut file = File::open("assets/BWC.png").unwrap();
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
 
         let svg_string = create_svg(&buffer);
 
         std::fs::write("assets/generated.svg", svg_string).expect("Unable to write file");
+    }
+
+    #[test]
+    fn color_weight() {
+        let mut histogram: HashMap<(u8, u8, u8), u32> = HashMap::new();
+        let mut img = image::ImageReader::open("assets/BWC.png")
+            .unwrap()
+            .decode()
+            .unwrap()
+            .to_rgba8();
+
+        let (mut width, mut height) = img.dimensions();
+        info!("Image readed {}x{}", width, height);
+
+        // ------- Upscale the image if necessary -------
+        if width * height < 512 * 512 {
+            let scale_factor = 3;
+            width = width * scale_factor;
+            height = height * scale_factor;
+
+            img = resize(&img, width, height, FilterType::CatmullRom);
+
+            warn!("Image size is small. Upscalled to {}x{}", width, height);
+        }
+
+        for pixel in img.pixels() {
+            let key = (pixel[0], pixel[1], pixel[2]);
+            if pixel[3] == 0 {
+                continue;
+            }
+
+            *histogram.entry(key).or_insert(1) += 1;
+        }
+
+        let mut palette = vec![];
+
+        let mut histogram: Vec<_> = histogram.iter().collect();
+        histogram.sort_by(|a, b| b.1.cmp(a.1));
+        for (hi, _i) in histogram.iter().take(16) {
+            println!("{:?}", hi);
+            palette.push([hi.0, hi.1, hi.2]);
+        }
+
+        let reducer = ColorReducer::new(palette);
+
+        let reduced_img = reducer.reduce(&img.into()).unwrap();
+
+        // Save the processed image to a file
+        reduced_img.save("output_image.png").unwrap();
     }
 }
