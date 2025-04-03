@@ -6,23 +6,27 @@ edition = "2021"
 [lib]
 name = "svgen"
 path = "src/lib.rs"
+crate-type = ["cdylib"]
 
 [dependencies]
-flate2 = "1.0.35"
-imageproc = "0.25.0"
 svg = "0.18.0"
 wasm-bindgen = "0.2.100"
-image = { version = "0.25.5", default-features = false, features = [
+image = { version = "0.25.6", default-features = false, features = [
     "rayon",
     "png",
     "webp",
     "jpeg",
     "bmp",
 ] }
-log = "0.4.25"
-rayon = "1.10.0"
-palette = "0.7.6"
-geo = "0.29.3"
+log = "0.4.27"
 
 [dev-dependencies]
-env_logger = "0.11.6"
+env_logger = "0.11.7"
+wasm-bindgen-test = "0.3.50"
+
+[profile.release]
+lto = true
+opt-level = "z"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O3']

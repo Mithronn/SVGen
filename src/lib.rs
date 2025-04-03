@@ -1,25 +1,28 @@
-pub mod color_reducer;
-pub mod constants;
-pub mod parsers;
-pub mod path_simplify;
+pub mod algo;
+pub mod curve_fit_nd;
+pub mod min_heap;
+pub mod path_optimizer;
+pub mod polygon_simplifier;
+pub mod quantizer;
 pub mod structs;
 pub mod utils;
+pub mod vec2;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{BufReader, Cursor},
-    path::Path,
 };
 
-use geo::{Coord, LineString, Simplify};
-use imageproc::{
-    contours::find_contours_with_threshold,
-    image::{
-        imageops::{resize, FilterType},
-        GrayImage, ImageBuffer, ImageReader, Luma, Rgba,
-    },
+use vec2::DVec2;
+use wasm_bindgen::prelude::*;
+
+use image::{
+    imageops::{resize, FilterType},
+    ImageReader, Rgba,
 };
+
 use log::{info, trace, warn};
+use path_optimizer::OptimizedData;
 use svg::{
     node::element::{
         path::{Command, Data, Position},
@@ -28,51 +31,11 @@ use svg::{
     Document, Node,
 };
 
-use parsers::{bytes_to_pixels, parse_chunks, parse_ihdr, parse_plte, parse_trns, read_png};
-use path_simplify::simplify;
-use structs::{DecodeImage, DecodeResult, ImageFormat, Point, Segment};
-use utils::{decompress_idat, generate_id, trunc};
-
-pub fn decode<P>(path: P) -> DecodeResult
-where
-    P: AsRef<Path>,
-{
-    trace!("Image decode");
-
-    let buffer = read_png(path.as_ref()).unwrap();
-    let chunks = parse_chunks(&buffer);
-
-    info!("Parsed {} image chunks", chunks.len());
-
-    // Extract IHDR, PLTE, tRNS
-    let ihdr_chunk = chunks.iter().find(|c| c.type_str == "IHDR").unwrap();
-    let ihdr = parse_ihdr(&ihdr_chunk.data);
-    let plte = parse_plte(&chunks);
-    let trns = parse_trns(&chunks);
-
-    info!("Image Header(IHDR): {ihdr:?}");
-
-    // TODO: Other formats need to check "jpeg, bmp, webp"
-    let format = ImageFormat::Png;
-
-    let idat_data: Vec<u8> = chunks
-        .iter()
-        .filter(|c| c.type_str == "IDAT")
-        .flat_map(|c| c.data.clone())
-        .collect();
-
-    let decompressed = decompress_idat(&idat_data);
-    let pixels = bytes_to_pixels(&decompressed, &ihdr, &plte, &trns);
-
-    info!("Decoded {} image {}x{}", format, ihdr.width, ihdr.height);
-
-    Ok(DecodeImage {
-        pixels,
-        format,
-        width: ihdr.width,
-        height: ihdr.height,
-    })
-}
+use algo::extract_outline;
+use polygon_simplifier::poly_list_simplify;
+use quantizer::NeuQuant;
+use structs::TurnPolicy;
+use utils::{generate_id, poly_list_subdivide, poly_list_subdivide_to_limit, trunc};
 
 pub fn create_svg(image_byte: &[u8]) -> String {
     trace!("SVG Creation");
@@ -99,23 +62,43 @@ pub fn create_svg(image_byte: &[u8]) -> String {
         warn!("Image size is small. Upscalled to {}x{}", width, height);
     }
 
-    // --- Quantize the Image Colors ---
-    // Here we reduce color variety by rounding each channel to the nearest multiple.
-    let quantization_factor: u8 = 128;
-    let mut quantized_image = ImageBuffer::new(width, height);
-    let mut unique_colors = HashSet::new();
+    let error_threshold = 1.0;
+    let simplify_threshold = 2.5;
+    let corner_threshold = 30.0_f64.to_radians();
+    let use_optimize_exhaustive = true;
+    let length_threshold = 0.75;
+    let size: [usize; 2] = [width as usize, height as usize];
+    let turn_policy = TurnPolicy::Majority;
+    let scale = 1.0;
+    let colors = 5;
 
-    for (x, y, pixel) in image_reader.enumerate_pixels() {
-        let r = (pixel[0] / quantization_factor) * quantization_factor;
-        let g = (pixel[1] / quantization_factor) * quantization_factor;
-        let b = (pixel[2] / quantization_factor) * quantization_factor;
-        // let r = pixel[0];
-        // let g = pixel[1];
-        // let b = pixel[2];
-        let quant_pixel = Rgba([r, g, b, pixel[3]]);
-        quantized_image.put_pixel(x, y, quant_pixel);
-        unique_colors.insert((r, g, b));
+    // // Define a sharpening kernel
+    // let kernel: [i32; 9] = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+    // image_reader = imageproc::filter::filter3x3(&image_reader, &kernel);
+
+    // --- Quantize the Image Colors ---
+    let quantizer = NeuQuant::new(10, colors, image_reader.as_raw());
+    let palette = quantizer.color_map_rgba();
+    let img_palette = quantizer
+        .color_map_rgba()
+        .chunks(4)
+        .into_iter()
+        .map(|x| Rgba([x[0], x[1], x[2], x[3]]))
+        .collect::<Vec<Rgba<u8>>>();
+
+    // Iterate through each pixel, quantize its color, and write it to the output image.
+    for pixel in image_reader.pixels_mut() {
+        // Get the index in the palette corresponding to this color.
+        let idx = quantizer.index_of(&pixel.0);
+        // Each color in the palette is 3 bytes (RGB).
+        let r = palette[idx * 4];
+        let g = palette[idx * 4 + 1];
+        let b = palette[idx * 4 + 2];
+        // Write the quantized color; we keep the original alpha.
+        *pixel = Rgba([r, g, b, pixel.0[3]]);
     }
+
+    image_reader.save("assets/debug.png").unwrap();
 
     // ------- SVG container created -------
     let mut document = Document::new()
@@ -130,110 +113,114 @@ pub fn create_svg(image_byte: &[u8]) -> String {
     let mut strokes: HashMap<String, Vec<String>> = HashMap::new();
     let mut fills: HashMap<String, Vec<String>> = HashMap::new();
 
+    let mut id_num = 0;
+
     // ------- Process each unique colors -------
-    for color in unique_colors {
+    for color in img_palette {
         // Build a binary mask for the current color
-        let mut mask: GrayImage = GrayImage::new(width, height);
-        for (x, y, pixel) in quantized_image.enumerate_pixels() {
-            let r = (pixel[0] / quantization_factor) * quantization_factor;
-            let g = (pixel[1] / quantization_factor) * quantization_factor;
-            let b = (pixel[2] / quantization_factor) * quantization_factor;
+        let mut image: Vec<bool> = Vec::with_capacity(width as usize * height as usize);
+        for pixel in image_reader.pixels() {
             let a = pixel[3];
 
-            if (r, g, b) == color && a > 0 {
-                mask.put_pixel(x, y, Luma([255]));
+            if (pixel[0], pixel[1], pixel[2]) == (color.0[0], color.0[1], color.0[2]) && a == 255 {
+                image.push(true);
             } else {
-                mask.put_pixel(x, y, Luma([0]));
+                image.push(false);
             }
         }
 
-        // Extract contours from the mask
-        let contours = find_contours_with_threshold::<u32>(&mask, 1);
+        let fill_color = format!("#{:02X}{:02X}{:02X}", color.0[0], color.0[1], color.0[2]);
 
-        for (i, contour) in contours.iter().enumerate() {
-            // Convert the color to a hex string for SVG.
-            let fill_color = format!("#{:02X}{:02X}{:02X}", color.0, color.1, color.2);
+        let mut poly_list_to_fit = extract_outline(&image, &size, turn_policy, true)
+            .iter_mut()
+            .map(|x| {
+                (
+                    x.0,
+                    x.1.iter_mut().map(|x| x.as_dvec2()).collect::<Vec<DVec2>>(),
+                )
+            })
+            .collect::<Vec<(bool, Vec<DVec2>)>>();
 
-            let simplified = contour
-                .points
-                .iter()
-                .map(|&p| Coord {
-                    x: p.x as f64,
-                    y: p.y as f64,
-                })
-                .collect::<Vec<Coord>>();
+        // Ensure we always have at least one knot between 'corners'
+        // this means theres always a middle tangent, giving us more possible
+        // tangents when fitting the curve.
+        poly_list_subdivide(&mut poly_list_to_fit);
+        poly_list_simplify(&mut poly_list_to_fit, simplify_threshold);
+        poly_list_subdivide(&mut poly_list_to_fit);
 
-            let rdp_tolerance = 1 as f64;
-            let point_simplify_tolerance = 0.1 as f64;
-            let coords = LineString::from(simplified).simplify(&rdp_tolerance);
+        // While a little excessive, setting the `length_threshold` around 1.0
+        // helps by ensure the density of the polygon is even
+        // (without this diagonals will have many more points).
+        poly_list_subdivide_to_limit(&mut poly_list_to_fit, length_threshold);
 
-            let simplified = coords
-                .0
-                .iter()
-                .map(|&p| Point::new(p.x as f64, p.y as f64))
-                .collect::<Vec<Point>>();
+        let curve_list = curve_fit_nd::fit_poly_list(
+            poly_list_to_fit,
+            error_threshold,
+            corner_threshold,
+            use_optimize_exhaustive,
+        );
 
-            let segments = simplify(&simplified, point_simplify_tolerance);
-            let segments = if segments.is_some() {
-                segments.unwrap()
-            } else {
-                continue;
-            };
+        // Build SVG path data
+        let mut data = Data::new();
 
-            // Build SVG path data
-            let mut data = Data::new();
+        for &(_is_cyclic, ref p) in &curve_list {
+            let mut v_prev = p.last().unwrap();
+            let mut is_first = true;
+            for v_curr in p {
+                debug_assert!(v_curr[0].is_finite());
+                debug_assert!(v_curr[1].is_finite());
+                debug_assert!(v_curr[2].is_finite());
 
-            if let Some(first) = segments.first() {
-                let move_to = match first {
-                    Segment::Line { start, .. } => (trunc(start.x), trunc(start.y)),
-                    Segment::Cubic(curve) => (trunc(curve.p0.x), trunc(curve.p0.y)),
-                };
-                data.append(Command::Move(
-                    Position::Absolute,
-                    vec![move_to.0, move_to.1].into(),
-                ));
-            }
+                let k0 = v_prev[1];
+                let h0 = v_prev[2];
 
-            for segment in &segments {
-                match segment {
-                    Segment::Line { end, .. } => {
-                        data.append(Command::Line(
-                            Position::Absolute,
-                            vec![trunc(end.x), trunc(end.y)].into(),
-                        ));
-                    }
-                    Segment::Cubic(curve) => {
-                        data.append(Command::CubicCurve(
-                            Position::Absolute,
-                            vec![
-                                trunc(curve.p1.x),
-                                trunc(curve.p1.y),
-                                trunc(curve.p2.x),
-                                trunc(curve.p2.y),
-                                trunc(curve.p3.x),
-                                trunc(curve.p3.y),
-                            ]
-                            .into(),
-                        ));
-                    }
+                let h1 = v_curr[0];
+                let k1 = v_curr[1];
+
+                // Could optimize this, but keep now for simplicity
+                if is_first {
+                    data.append(Command::Move(
+                        Position::Absolute,
+                        vec![trunc(k0.x * scale), trunc(k0.y * scale)].into(),
+                    ));
                 }
+                data.append(Command::CubicCurve(
+                    Position::Absolute,
+                    vec![
+                        trunc(h0.x * scale),
+                        trunc(h0.y * scale),
+                        trunc(h1.x * scale),
+                        trunc(h1.y * scale),
+                        trunc(k1.x * scale),
+                        trunc(k1.y * scale),
+                    ]
+                    .into(),
+                ));
+                v_prev = v_curr;
+                is_first = false;
             }
+        }
 
-            if !data.is_empty() {
-                data.append(Command::Close);
+        if !data.is_empty() {
+            data.append(Command::Close);
 
-                let id = generate_id(i);
+            let id = generate_id(id_num);
+            id_num += 1;
 
-                let path = SVGPath::new().set("id", id.clone()).set("d", data);
-                defs.append(path);
+            let mut optimized_data = OptimizedData::from(data);
+            optimized_data.to_relative();
 
-                strokes
-                    .entry(fill_color.clone())
-                    .or_insert_with(Vec::new)
-                    .push(id.clone());
+            let path = SVGPath::new()
+                .set("id", id.clone())
+                .set("d", optimized_data.optimize());
+            defs.append(path);
 
-                fills.entry(fill_color).or_insert_with(Vec::new).push(id);
-            }
+            strokes
+                .entry(fill_color.clone())
+                .or_insert_with(Vec::new)
+                .push(id.clone());
+
+            fills.entry(fill_color).or_insert_with(Vec::new).push(id);
         }
     }
 
@@ -249,14 +236,14 @@ pub fn create_svg(image_byte: &[u8]) -> String {
     }
 
     for (fill, ids) in fills.iter() {
-        // let mut group = Group::new().set("fill", fill.clone());
+        let mut group = Group::new().set("fill", fill.clone());
 
-        // for id in ids {
-        //     let stroke_use = Use::new().set("href", format!("#{id}"));
-        //     group.append(stroke_use);
-        // }
+        for id in ids {
+            let stroke_use = Use::new().set("href", format!("#{id}"));
+            group.append(stroke_use);
+        }
 
-        // fill_group.append(group);
+        fill_group.append(group);
     }
 
     document.append(defs);
@@ -271,15 +258,16 @@ pub fn create_svg(image_byte: &[u8]) -> String {
     document.to_string()
 }
 
+#[wasm_bindgen]
+pub fn create_svg_wasm(image_byte: Box<[u8]>) -> JsValue {
+    JsValue::from_str(&create_svg(&image_byte))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs::File, io::Read};
 
-    use crate::color_reducer::ColorReducer;
-    use crate::structs::Pixel;
-
     use super::*;
-    use image::ImageBuffer;
 
     fn init_logger() {
         let _ = env_logger::builder()
@@ -287,40 +275,11 @@ mod tests {
             .try_init();
     }
 
-    fn save_as_png(pixels: &[Pixel], width: u32, height: u32, path: &str) {
-        let mut img = ImageBuffer::new(width, height);
-        for (i, pixel) in pixels.iter().enumerate() {
-            let x = i as u32 % width;
-            let y = i as u32 / width;
-            img.put_pixel(x, y, image::Rgba([pixel.r, pixel.g, pixel.b, pixel.a]));
-        }
-        img.save(path).unwrap();
-    }
-
-    #[test]
-    fn decode_to_file() {
-        init_logger();
-
-        let decoded_image = decode("assets/hurricane.png").unwrap();
-        save_as_png(
-            &decoded_image.pixels,
-            decoded_image.width,
-            decoded_image.height,
-            "assets/hurricane.bmp",
-        );
-
-        let img = image::ImageReader::open("assets/image.png")
-            .unwrap()
-            .decode()
-            .unwrap();
-        img.save("assets/output_2.bmp").unwrap();
-    }
-
     #[test]
     fn decode_to_svg() {
         init_logger();
 
-        let mut file = File::open("assets/BWC.png").unwrap();
+        let mut file = File::open("assets/hurricane.png").unwrap();
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
 
@@ -329,52 +288,53 @@ mod tests {
         std::fs::write("assets/generated.svg", svg_string).expect("Unable to write file");
     }
 
+    use image::{open, RgbaImage};
+
+    /// Reduces a single channel value to the nearest available level.
+    /// For example, with `levels = 4`, the only possible outputs are 0, 85, 170, and 255.
+    fn posterize_channel(value: u8, levels: u8) -> u8 {
+        // Calculate the step size between levels.
+        let step = 255.0 / (levels - 1) as f32;
+        // Normalize, round to the nearest level, then scale back.
+        (((value as f32 / 255.0) * (levels - 1) as f32).round() * step) as u8
+    }
+
     #[test]
-    fn color_weight() {
-        let mut histogram: HashMap<(u8, u8, u8), u32> = HashMap::new();
-        let mut img = image::ImageReader::open("assets/BWC.png")
-            .unwrap()
-            .decode()
-            .unwrap()
+    fn posterization() {
+        // Open the input image and convert it to an RGBA image.
+        let mut img: RgbaImage = open("assets/BWC.png")
+            .expect("Failed to open image")
             .to_rgba8();
 
-        let (mut width, mut height) = img.dimensions();
-        info!("Image readed {}x{}", width, height);
+        // // Define how many levels per channel you want (e.g., 4 gives a blocky, less anti-aliased look).
+        let levels: u8 = 6;
 
-        // ------- Upscale the image if necessary -------
-        if width * height < 512 * 512 {
-            let scale_factor = 3;
-            width = width * scale_factor;
-            height = height * scale_factor;
-
-            img = resize(&img, width, height, FilterType::CatmullRom);
-
-            warn!("Image size is small. Upscalled to {}x{}", width, height);
+        // Iterate over every pixel and apply the posterization to R, G, and B channels.
+        for pixel in img.pixels_mut() {
+            pixel[0] = posterize_channel(pixel[0], levels); // Red
+            pixel[1] = posterize_channel(pixel[1], levels); // Green
+            pixel[2] = posterize_channel(pixel[2], levels); // Blue
+                                                            // Optionally, leave the alpha channel unchanged.
         }
 
-        for pixel in img.pixels() {
-            let key = (pixel[0], pixel[1], pixel[2]);
-            if pixel[3] == 0 {
-                continue;
-            }
+        // --- Quantize the Image Colors ---
+        let quantizer = NeuQuant::new(10, 5, img.as_raw());
+        let palette = quantizer.color_map_rgba();
 
-            *histogram.entry(key).or_insert(1) += 1;
+        // Iterate through each pixel, quantize its color, and write it to the output image.
+        for pixel in img.pixels_mut() {
+            // Get the index in the palette corresponding to this color.
+            let idx = quantizer.index_of(&pixel.0);
+            // Each color in the palette is 3 bytes (RGB).
+            let r = palette[idx * 4];
+            let g = palette[idx * 4 + 1];
+            let b = palette[idx * 4 + 2];
+            // Write the quantized color; we keep the original alpha.
+            *pixel = Rgba([r, g, b, pixel.0[3]]);
         }
 
-        let mut palette = vec![];
-
-        let mut histogram: Vec<_> = histogram.iter().collect();
-        histogram.sort_by(|a, b| b.1.cmp(a.1));
-        for (hi, _i) in histogram.iter().take(16) {
-            println!("{:?}", hi);
-            palette.push([hi.0, hi.1, hi.2]);
-        }
-
-        let reducer = ColorReducer::new(palette);
-
-        let reduced_img = reducer.reduce(&img.into()).unwrap();
-
-        // Save the processed image to a file
-        reduced_img.save("output_image.png").unwrap();
+        // Save the resulting image.
+        img.save("assets/posterized_debug.png")
+            .expect("Failed to save image");
     }
 }
