@@ -86,9 +86,24 @@ pub fn create_svg(image_byte: &[u8]) -> String {
     let mut strokes: HashMap<String, Vec<String>> = HashMap::new();
     let mut fills: HashMap<String, Vec<String>> = HashMap::new();
 
+    // --- Quantize the Image Colors ---
+    let quantizer = NeuQuant::new(10, colors, image_reader.as_raw());
+    let palette = quantizer.color_map_rgba();
+
+    // Iterate through each pixel, quantize its color, and write it to the output image.
+    for pixel in image_reader.pixels_mut() {
+        // Get the index in the palette corresponding to this color.
+        let idx = quantizer.index_of(&pixel.0);
+        // Each color in the palette is 4 bytes (RGBAs).
+        let r = palette[idx * 4];
+        let g = palette[idx * 4 + 1];
+        let b = palette[idx * 4 + 2];
+        // Write the quantized color; we keep the original alpha.
+        *pixel = Rgba([r, g, b, pixel.0[3]]);
+    }
+
     match color_mode {
         ColorMode::Black => {
-            // let mut id_num = 0;
             let mut image: Vec<bool> = Vec::with_capacity((width * height) as usize);
             let color_max: u8 = 255;
             let color_mid = ((color_max / 2) as u16) * 3;
@@ -203,28 +218,13 @@ pub fn create_svg(image_byte: &[u8]) -> String {
             // let kernel: [i32; 9] = [0, -1, 0, -1, 5, -1, 0, -1, 0];
             // image_reader = imageproc::filter::filter3x3(&image_reader, &kernel);
 
-            // --- Quantize the Image Colors ---
-            let quantizer = NeuQuant::new(10, colors, image_reader.as_raw());
-            let palette = quantizer.color_map_rgba();
             let img_palette = palette
                 .chunks(4)
                 .into_iter()
                 .map(|x| Rgba([x[0], x[1], x[2], x[3]]))
                 .collect::<Vec<Rgba<u8>>>();
 
-            // Iterate through each pixel, quantize its color, and write it to the output image.
-            for pixel in image_reader.pixels_mut() {
-                // Get the index in the palette corresponding to this color.
-                let idx = quantizer.index_of(&pixel.0);
-                // Each color in the palette is 4 bytes (RGBAs).
-                let r = palette[idx * 4];
-                let g = palette[idx * 4 + 1];
-                let b = palette[idx * 4 + 2];
-                // Write the quantized color; we keep the original alpha.
-                *pixel = Rgba([r, g, b, pixel.0[3]]);
-            }
-
-            image_reader.save("assets/debug.png").unwrap();
+            // image_reader.save("assets/debug.png").unwrap();
 
             // ------- Process each unique colors -------
             for color in img_palette {
