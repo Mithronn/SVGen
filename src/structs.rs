@@ -5,3 +5,9 @@ pub enum TurnPolicy {
     Majority,
     Minority,
 }
+
+#[derive(Copy, Clone)]
+pub enum ColorMode {
+    Black,
+    Colored,
+}
