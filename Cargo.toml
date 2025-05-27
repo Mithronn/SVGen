@@ -6,7 +6,7 @@ edition = "2021"
 [lib]
 name = "svgen"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 svg = "0.18.0"
@@ -30,3 +30,7 @@ opt-level = "z"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ['-O3']
+
+[[test]]
+name = "decode_to_svg"
+harness = false

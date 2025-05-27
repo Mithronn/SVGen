@@ -12,17 +12,13 @@ use std::{
     collections::HashMap,
     io::{BufReader, Cursor},
 };
-
-use vec2::DVec2;
 use wasm_bindgen::prelude::*;
 
 use image::{
     imageops::{resize, FilterType},
     ImageReader, Rgba,
 };
-
 use log::{info, trace, warn};
-use path_optimizer::OptimizedData;
 use svg::{
     node::element::{
         path::{Command, Data, Position},
@@ -32,12 +28,14 @@ use svg::{
 };
 
 use algo::extract_outline;
+use path_optimizer::OptimizedData;
 use polygon_simplifier::poly_list_simplify;
 use quantizer::NeuQuant;
 use structs::{ColorMode, TurnPolicy};
 use utils::{generate_id, poly_list_subdivide, poly_list_subdivide_to_limit, trunc};
+use vec2::DVec2;
 
-pub fn create_svg(image_byte: &[u8]) -> String {
+pub fn create_svg(image_byte: &[u8], color_mode: ColorMode) -> String {
     trace!("SVG Creation");
 
     // ------- Load the image -------
@@ -70,8 +68,7 @@ pub fn create_svg(image_byte: &[u8]) -> String {
     let size: [usize; 2] = [width as usize, height as usize];
     let turn_policy = TurnPolicy::Majority;
     let scale = 1.0;
-    let colors = 16;
-    let color_mode = ColorMode::Black;
+    let colors = 5;
 
     // ------- SVG container created -------
     let mut document = Document::new()
@@ -374,35 +371,13 @@ pub fn create_svg(image_byte: &[u8]) -> String {
 }
 
 #[wasm_bindgen]
-pub fn create_svg_wasm(image_byte: Box<[u8]>) -> JsValue {
-    JsValue::from_str(&create_svg(&image_byte))
+pub fn create_svg_wasm(image_byte: Box<[u8]>, color_mode: ColorMode) -> JsValue {
+    JsValue::from_str(&create_svg(&image_byte, color_mode))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Read};
-
     use super::*;
-
-    fn init_logger() {
-        let _ = env_logger::builder()
-            .filter_level(log::LevelFilter::Info)
-            .try_init();
-    }
-
-    #[test]
-    fn decode_to_svg() {
-        init_logger();
-
-        let mut file = File::open("assets/BWC.png").unwrap();
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).unwrap();
-
-        let svg_string = create_svg(&buffer);
-
-        std::fs::write("assets/generated.svg", svg_string).expect("Unable to write file");
-    }
-
     use image::{open, RgbaImage};
 
     /// Reduces a single channel value to the nearest available level.
@@ -422,7 +397,7 @@ mod tests {
             .to_rgba8();
 
         // // Define how many levels per channel you want (e.g., 4 gives a blocky, less anti-aliased look).
-        let levels: u8 = 6;
+        let levels: u8 = 4;
 
         // Iterate over every pixel and apply the posterization to R, G, and B channels.
         for pixel in img.pixels_mut() {

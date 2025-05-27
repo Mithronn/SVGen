@@ -1,3 +1,5 @@
+use wasm_bindgen::prelude::*;
+
 #[derive(Copy, Clone)]
 pub enum TurnPolicy {
     Black,
@@ -6,6 +8,7 @@ pub enum TurnPolicy {
     Minority,
 }
 
+#[wasm_bindgen]
 #[derive(Copy, Clone)]
 pub enum ColorMode {
     Black,
