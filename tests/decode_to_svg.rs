@@ -13,7 +13,7 @@ fn main() {
 
     let mut args = env::args();
 
-    let file_name = args.nth(3).unwrap_or("assets/hurricane.png".to_string());
+    let file_name = args.nth(3).unwrap_or("assets/BWC.png".to_string());
     let color_mode = match args
         .nth(0)
         .unwrap_or("colored".to_string())

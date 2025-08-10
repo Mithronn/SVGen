@@ -19,6 +19,7 @@ image = { version = "0.25.6", default-features = false, features = [
     "bmp",
 ] }
 log = "0.4.27"
+palette = "0.7.6"
 
 [dev-dependencies]
 env_logger = "0.11.7"

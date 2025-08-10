@@ -39,7 +39,7 @@ pub fn create_svg(image_byte: &[u8], color_mode: ColorMode) -> String {
     trace!("SVG Creation");
 
     // ------- Load the image -------
-    let mut image_reader = ImageReader::new(BufReader::new(Cursor::new(image_byte)))
+    let image_reader = ImageReader::new(BufReader::new(Cursor::new(image_byte)))
         .with_guessed_format()
         .unwrap()
         .decode()
@@ -48,6 +48,8 @@ pub fn create_svg(image_byte: &[u8], color_mode: ColorMode) -> String {
 
     let (mut width, mut height) = image_reader.dimensions();
     info!("Image readed {}x{}", width, height);
+
+    let mut image_reader = preprocess_image(&image_reader);
 
     // ------- Upscale the image if necessary -------
     if width * height < 512 * 512 {
@@ -60,15 +62,14 @@ pub fn create_svg(image_byte: &[u8], color_mode: ColorMode) -> String {
         warn!("Image size is small. Upscalled to {}x{}", width, height);
     }
 
-    let error_threshold = 1.0;
-    let simplify_threshold = 2.5;
-    let corner_threshold = 30.0_f64.to_radians();
+    let error_threshold = 1.5; // 1.0
+    let simplify_threshold = 2.0; // 2.5
+    let corner_threshold = 30.0_f64.to_radians(); // 30
     let use_optimize_exhaustive = true;
-    let length_threshold = 0.75;
+    let length_threshold = 0.75; // 0.75
     let size: [usize; 2] = [width as usize, height as usize];
     let turn_policy = TurnPolicy::Majority;
     let scale = 1.0;
-    let colors = 5;
 
     // ------- SVG container created -------
     let mut document = Document::new()
@@ -83,8 +84,16 @@ pub fn create_svg(image_byte: &[u8], color_mode: ColorMode) -> String {
     let mut strokes: HashMap<String, Vec<String>> = HashMap::new();
     let mut fills: HashMap<String, Vec<String>> = HashMap::new();
 
+    let mut hist: HashMap<[u8; 4], usize> = HashMap::new();
+    for pix in image_reader.pixels() {
+        let key = [pix[0], pix[1], pix[2], pix[3]];
+        *hist.entry(key).or_default() += 1;
+    }
+
+    let colors = 5;
+
     // --- Quantize the Image Colors ---
-    let quantizer = NeuQuant::new(10, colors, image_reader.as_raw());
+    let quantizer = NeuQuant::new(1, colors, image_reader.as_raw());
     let palette = quantizer.color_map_rgba();
 
     // Iterate through each pixel, quantize its color, and write it to the output image.
@@ -211,9 +220,6 @@ pub fn create_svg(image_byte: &[u8], color_mode: ColorMode) -> String {
         }
         ColorMode::Colored => {
             let mut id_num = 0;
-            // // Define a sharpening kernel
-            // let kernel: [i32; 9] = [0, -1, 0, -1, 5, -1, 0, -1, 0];
-            // image_reader = imageproc::filter::filter3x3(&image_reader, &kernel);
 
             let img_palette = palette
                 .chunks(4)
@@ -375,56 +381,150 @@ pub fn create_svg_wasm(image_byte: Box<[u8]>, color_mode: ColorMode) -> JsValue 
     JsValue::from_str(&create_svg(&image_byte, color_mode))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use image::{open, RgbaImage};
+fn preprocess_image(
+    img: &image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+) -> image::ImageBuffer<Rgba<u8>, Vec<u8>> {
+    // Adaptive Kuwahara filter: adapts the window radius per-pixel based on
+    // local edge strength (Sobel gradient magnitude). Flat regions use larger
+    // windows; edge regions use smaller windows to preserve detail.
+    pub fn adaptive_kuwahara_filter(
+        src: &image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+        r_min: f64,
+        r_max: f64,
+        gamma: f32,
+    ) -> image::ImageBuffer<Rgba<u8>, Vec<u8>> {
+        use image::{ImageBuffer, Rgba};
 
-    /// Reduces a single channel value to the nearest available level.
-    /// For example, with `levels = 4`, the only possible outputs are 0, 85, 170, and 255.
-    fn posterize_channel(value: u8, levels: u8) -> u8 {
-        // Calculate the step size between levels.
-        let step = 255.0 / (levels - 1) as f32;
-        // Normalize, round to the nearest level, then scale back.
-        (((value as f32 / 255.0) * (levels - 1) as f32).round() * step) as u8
-    }
+        let (width, height) = src.dimensions();
+        let mut dst = ImageBuffer::new(width, height);
 
-    #[test]
-    fn posterization() {
-        // Open the input image and convert it to an RGBA image.
-        let mut img: RgbaImage = open("assets/BWC.png")
-            .expect("Failed to open image")
-            .to_rgba8();
+        let w = width as usize;
+        let h = height as usize;
 
-        // // Define how many levels per channel you want (e.g., 4 gives a blocky, less anti-aliased look).
-        let levels: u8 = 4;
-
-        // Iterate over every pixel and apply the posterization to R, G, and B channels.
-        for pixel in img.pixels_mut() {
-            pixel[0] = posterize_channel(pixel[0], levels); // Red
-            pixel[1] = posterize_channel(pixel[1], levels); // Green
-            pixel[2] = posterize_channel(pixel[2], levels); // Blue
-                                                            // Optionally, leave the alpha channel unchanged.
+        // 1) Build grayscale (luminance) buffer
+        let mut lum: Vec<f32> = vec![0.0; w * h];
+        for y in 0..height {
+            for x in 0..width {
+                let p = src.get_pixel(x, y).0;
+                let l = 0.299f32 * p[0] as f32 + 0.587f32 * p[1] as f32 + 0.114f32 * p[2] as f32;
+                lum[(y as usize) * w + (x as usize)] = l;
+            }
         }
 
-        // --- Quantize the Image Colors ---
-        let quantizer = NeuQuant::new(10, 5, img.as_raw());
-        let palette = quantizer.color_map_rgba();
+        // Helper to clamp coordinates and fetch luminance
+        let get_lum = |xx: i32, yy: i32| -> f32 {
+            let cx = xx.clamp(0, (width as i32) - 1) as usize;
+            let cy = yy.clamp(0, (height as i32) - 1) as usize;
+            lum[cy * w + cx]
+        };
 
-        // Iterate through each pixel, quantize its color, and write it to the output image.
-        for pixel in img.pixels_mut() {
-            // Get the index in the palette corresponding to this color.
-            let idx = quantizer.index_of(&pixel.0);
-            // Each color in the palette is 3 bytes (RGB).
-            let r = palette[idx * 4];
-            let g = palette[idx * 4 + 1];
-            let b = palette[idx * 4 + 2];
-            // Write the quantized color; we keep the original alpha.
-            *pixel = Rgba([r, g, b, pixel.0[3]]);
+        // 2) Compute Sobel gradient magnitude per pixel, track global max
+        let mut grad_mag: Vec<f32> = vec![0.0; w * h];
+        let mut max_mag: f32 = 0.0;
+        for y in 0..(height as i32) {
+            for x in 0..(width as i32) {
+                // Sobel kernels
+                let gx = -1.0 * get_lum(x - 1, y - 1)
+                    + 1.0 * get_lum(x + 1, y - 1)
+                    + -2.0 * get_lum(x - 1, y)
+                    + 2.0 * get_lum(x + 1, y)
+                    + -1.0 * get_lum(x - 1, y + 1)
+                    + 1.0 * get_lum(x + 1, y + 1);
+                let gy = 1.0 * get_lum(x - 1, y - 1)
+                    + 2.0 * get_lum(x, y - 1)
+                    + 1.0 * get_lum(x + 1, y - 1)
+                    + -1.0 * get_lum(x - 1, y + 1)
+                    - 2.0 * get_lum(x, y + 1)
+                    - 1.0 * get_lum(x + 1, y + 1);
+                let m = (gx * gx + gy * gy).sqrt();
+                let idx = (y as usize) * w + (x as usize);
+                grad_mag[idx] = m;
+                if m > max_mag {
+                    max_mag = m;
+                }
+            }
         }
 
-        // Save the resulting image.
-        img.save("assets/posterized_debug.png")
-            .expect("Failed to save image");
+        // 3) Map gradient magnitude to adaptive radius per pixel
+        // Normalized edge strength in [0,1]. Strong edges -> near 1.
+        // Use (1 - edge)^gamma to favor larger windows in flat regions.
+        let denom = if max_mag > 0.0 { max_mag } else { 1.0 };
+        let r_min_c = r_min.max(0.0);
+        let r_max_c = r_max.max(r_min_c);
+        let range = (r_max_c - r_min_c) as f64;
+        let mut r_map: Vec<u32> = vec![r_min_c.round() as u32; w * h];
+        for i in 0..grad_mag.len() {
+            let e = (grad_mag[i] / denom).clamp(0.0, 1.0);
+            let inv = (1.0 - e).powf(gamma);
+            let r = r_min_c + range * (inv as f64);
+            let r_clamped = r.clamp(0.0, r_max_c);
+            r_map[i] = r_clamped.round() as u32;
+        }
+
+        // 4) Apply classic Kuwahara per pixel with its own radius
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y as usize) * w + (x as usize);
+                let r = r_map[idx];
+
+                let mut best_var = f64::MAX;
+                let mut best_mean = [0f64; 4];
+
+                // four sub-windows: (0,0), (0,r), (r,0), (r,r)
+                for (dy, dx) in &[(0, 0), (0, r), (r, 0), (r, r)] {
+                    let mut sum = [0u64; 4];
+                    let mut sum_sq = [0u64; 4];
+                    let mut count = 0u64;
+
+                    let y0 = y.saturating_sub(*dy);
+                    let x0 = x.saturating_sub(*dx);
+                    for yy in y0..=(y0 + r).min(height - 1) {
+                        for xx in x0..=(x0 + r).min(width - 1) {
+                            let pix = src.get_pixel(xx, yy).0;
+                            for c in 0..4 {
+                                let v = pix[c] as u64;
+                                sum[c] += v;
+                                sum_sq[c] += v * v;
+                            }
+                            count += 1;
+                        }
+                    }
+
+                    let mut var = 0f64;
+                    let mut mean = [0f64; 4];
+                    for c in 0..4 {
+                        let s = sum[c] as f64;
+                        let ss = sum_sq[c] as f64;
+                        mean[c] = s / count as f64;
+                        var += (ss / count as f64) - (mean[c] * mean[c]);
+                    }
+                    var /= 4.0;
+
+                    if var < best_var {
+                        best_var = var;
+                        best_mean = mean;
+                    }
+                }
+
+                let out_pix = Rgba([
+                    best_mean[0].round().clamp(0.0, 255.0) as u8,
+                    best_mean[1].round().clamp(0.0, 255.0) as u8,
+                    best_mean[2].round().clamp(0.0, 255.0) as u8,
+                    best_mean[3].round().clamp(0.0, 255.0) as u8,
+                ]);
+                dst.put_pixel(x, y, out_pix);
+            }
+        }
+
+        dst
     }
+
+    // Reasonable defaults: r in [1, 5], gamma = 1.2 (more weight to edges)
+    let a = adaptive_kuwahara_filter(&img, 1.0, 1.5, 1.2);
+
+    a.save("assets/preprocessed.png").expect("save");
+    a
 }
+
+#[cfg(test)]
+mod tests {}
